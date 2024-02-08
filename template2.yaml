@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CI/CD Infrastructure'
+
+Parameters:
+  RepoURL:
+    Type: String
+    Default: "https://gitlab.example.com/your-repo.git"
+
+Resources:
+  GitlabInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: 'ami-07ec4220c92589b40'
+      InstanceType: 't3.medium'
+      KeyName: 'jenkins_keypair'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+        
+          set -e
+          sudo apt update
+          sudo apt install ca-certificates curl openssh-server postfix tzdata perl
+          cd /tmp
+          curl -LO https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh
+          less /tmp/script.deb.sh
+          sudo bash /tmp/script.deb.sh
+          sudo apt install gitlab-ce
+          echo "external_url 'http://gitlab.example.com'" | sudo tee -a /etc/gitlab/gitlab.rb
+          sudo ufw enable
+          sudo ufw allow http
+          sudo ufw allow https
+          sudo ufw allow OpenSSH
+          sudo gitlab-ctl reconfigure
+          sudo gitlab-rails console -e production "project = Project.find_by_path('${RepoURL}'); webhook = project.hooks.new(url: 'http://${JenkinsInstance.PublicIp}:8080/gitlab/build_now', push_events: true, merge_requests_events: true, tag_push_events: true, enable_ssl_verification: false); webhook.save!"
+
+  JenkinsInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: 'ami-07ec4220c92589b40'
+      InstanceType: 't3.micro'
+      KeyName: 'jenkins_keypair'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo apt update
+          sudo apt install openjdk-11-jdk -y
+          sudo wget -O /usr/share/keyrings/jenkins-keyring.asc https://pkg.jenkins.io/debian-stable/jenkins.io.key
+          echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/ | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y fontconfig openjdk-11-jre
+          sudo apt-get install -y jenkins
+          sudo systemctl start jenkins
+          sudo systemctl enable jenkins
+          sudo -u jenkins ssh-keygen -t rsa -N "" -f /var/lib/jenkins/.ssh/id_rsa
+          sudo -u jenkins ssh-copy-id -i /var/lib/jenkins/.ssh/id_rsa ubuntu@${TestServerInstance.PublicIp}
+          sudo -u jenkins ssh-copy-id -i /var/lib/jenkins/.ssh/id_rsa ubuntu@${ProdServerInstance.PublicIp}
+          sudo -u jenkins git clone ${RepoURL} /var/lib/jenkins/workspace/my-pipeline
+
+  TestServerInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: 'ami-07ec4220c92589b40'
+      InstanceType: 't3.micro'
+      KeyName: 'jenkins_keypair'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+      
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y apache2
+          
+          sudo mkdir -p /home/ubuntu/.ssh
+          sudo cp /root/.ssh/authorized_keys /home/ubuntu/.ssh/authorized_keys
+          sudo chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+          sudo chmod 700 /home/ubuntu/.ssh
+          sudo chmod 600 /home/ubuntu/.ssh/authorized_keys
+          echo "SSH configuration for Jenkins user completed on Test Server."
+          git clone ${RepoURL}
+          cd your-repo 
+
+  ProdServerInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: 'ami-07ec4220c92589b40'
+      InstanceType: 't3.micro'
+      KeyName: 'jenkins_keypair'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y apache2
+          sudo mkdir -p /home/ubuntu/.ssh
+          sudo cp /root/.ssh/authorized_keys /home/ubuntu/.ssh/authorized_keys
+          sudo chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+          sudo chmod 700 /home/ubuntu/.ssh
+          sudo chmod 600 /home/ubuntu/.ssh/authorized_keys
+          echo "SSH configuration for Jenkins user completed on Prod Server."
+          git clone ${RepoURL}
+          cd your-repo 
+          read -p "Do you want to deploy the new changes to production? (yes/no): " deploy_option
+          if [ "$deploy_option" == "yes" ]; then
+              echo "Deployment to Production completed."
+          else
+              echo "Skipping production deployment."
+          fi
