@@ -1,1 +1,1 @@
-# CloudFormation-Template
+TARGET :-" There shall be 4 AWS EC2 instances of Gitlab , Jenkins , Test Server and Prod Server. Establish connection among them such that if we make any change in Gitlab it will be taken in the Jenkins Pipeline and it will get reflected in the Test server. After Test server, there will be a user input of either "yes" or "no". If "yes",then it will proceed to the Prod server for deployment." using AWS CloudFormation.
